@@ -354,6 +354,8 @@ class DefaultLauncher:
             kwargs['stderr'] = asyncio.subprocess.STDOUT
         if p.env is not None:
             kwargs['env'] = p.env
+        if p.cwd is not None:
+            kwargs['cwd'] = p.cwd
         loop = asyncio.get_event_loop()
         try:
             transport, protocol = await loop.subprocess_exec(
