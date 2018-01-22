@@ -42,9 +42,30 @@ class DefaultLauncher:
         self.print_mutex = threading.Lock()
         self.loop = None
         self.loop_lock = threading.Lock()
+        self.open_loop()
         self.interrupt_future = asyncio.Future()
         self.launch_complete = threading.Event()
         self.processes_spawned = threading.Event()
+
+    def open_loop(self):
+        with self.loop_lock:
+            if self.loop is None:
+                if os.name == 'nt':
+                    # Windows needs a custom event loop to use
+                    # subprocess transport
+                    self.loop = asyncio.ProactorEventLoop()
+                else:
+                    self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+                asyncio.get_child_watcher()
+
+    def close_loop(self):
+        with self.loop_lock:
+            if self.loop is None:
+                return
+            self.loop.close()
+            asyncio.get_event_loop_policy().set_child_watcher(None)
+            self.loop = None
 
     def add_launch_descriptor(self, launch_descriptor):
         for task_descriptor in launch_descriptor.task_descriptors:
@@ -78,13 +99,6 @@ class DefaultLauncher:
         return self.processes_spawned.is_set()
 
     def launch(self):
-        with self.loop_lock:
-            if os.name == 'nt':
-                # Windows needs a custom event loop to use subprocess transport
-                self.loop = asyncio.ProactorEventLoop()
-            else:
-                self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
         loop = self.loop
         try:
             generator = self._run()
@@ -100,12 +114,15 @@ class DefaultLauncher:
             self.interrupt_launch_non_threadsafe()
             loop.run_forever()
             returncode = 1
-        loop.close()
+        if threading.current_thread() == threading.main_thread():
+            loop.close()
         with self.loop_lock:
             self.loop = None
         if os.name != 'nt':
-            # the watcher must be reset otherwise a repeated invocation fails inside asyncio
-            asyncio.get_event_loop_policy().set_child_watcher(None)
+            if threading.current_thread() == threading.main_thread():
+                # the watcher must be reset otherwise a repeated
+                # invocation fails inside asyncio
+                asyncio.get_event_loop_policy().set_child_watcher(None)
 
         return returncode
 
